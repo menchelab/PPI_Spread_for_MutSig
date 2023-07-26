@@ -12,13 +12,13 @@ import sys
 parameter =  sys.argv[1]
 
 # helper dictionary to map ensembl to hgnc symbol
-name_mapper = json.load(open("protein-coding_gene.json"))['response']['docs']
+name_mapper = json.load(open("data/protein-coding_gene.json"))['response']['docs']
 ensembl_symbol = {i['ensembl_gene_id']:i['symbol'] for i in name_mapper if 'ensembl_gene_id' in i.keys()}
 
 # removed rows and columns with all zeros
 # representing samples with no mutations in PPI genes and
 # isolated, unmutated genes in the PPI respectively
-smoothed_mutation = pd.read_csv("smoothed_mutation_"+parameter+".csv", index_col=0).T 
+smoothed_mutation = pd.read_csv("data/smoothed_mutation_"+parameter+".csv", index_col=0).T 
 smoothed_mutation = smoothed_mutation.T[(smoothed_mutation**2).sum(axis=0) > 0].T
 smoothed_mutation = smoothed_mutation[(smoothed_mutation**2).sum(axis=1) > 0]
 
@@ -41,7 +41,7 @@ fig.savefig("figures/smoothing_"+parameter+"/pca/PCA_"+str(i)+"_"+str(j)+".svg")
 fig.savefig("figures/smoothing_"+parameter+"/pca/PCA_"+str(i)+"_"+str(j)+".png", dpi=500)
 
 # load up the mutational signatures
-signatures = pd.read_csv("weight_guesses.csv", index_col=0)
+signatures = pd.read_csv("data/weight_guesses.csv", index_col=0)
 # drop some signatures since we have no associate mutationnal data
 signatures = signatures.reindex(smoothed_mutation.index)
 
