@@ -6,32 +6,7 @@ import tqdm
 
 parameter = sys.argv[1]
 
-# load the edge list
-df = pd.read_csv("data/9606.protein.physical.links.v11.5.txt", sep=" ")
-
-# set a cutoff for score
-cutoff_score = 600
-df = df[df.combined_score > cutoff_score]
-
-ensembl_map = pd.read_csv("data/Homo_sapiens.GRCh38.110.entrez.tsv", sep="\t").set_index("protein_stable_id")["gene_stable_id"].to_dict()
-del ensembl_map['-']
-
-def try_ensembl_map(ensembl):
-  try:
-    return ensembl_map[ensembl]
-  except KeyError:
-    return np.nan
-
-# map the ensemblle protein id to a an entrex id for each edge in the PPI
-df["gene1"] = df.protein1.map(lambda x:try_ensembl_map(x.split(".")[1]))
-df["gene2"] = df.protein2.map(lambda x:try_ensembl_map(x.split(".")[1]))
-
-df = df.dropna()
-
-# build a networkx graph
-ppi = nx.Graph()
-for i,v in df.iterrows():
-  ppi.add_edge(v["gene1"],v["gene2"])
+ppi = nx.read_gml("data/ppi.gml")
 
 # list out the nodes in the network
 nodelist = list(ppi.nodes())
@@ -51,13 +26,14 @@ propagator = degree_normalization @ unnormalized_propagator
 
 # build up the random walk with restart operatorr
 beta = int(parameter)/100
-random_walker = (1-beta)*scipy.sparse.eye(len(nodelist))
 
+random_walker = scipy.sparse.eye(len(nodelist))
 cum_propagator = scipy.sparse.eye(len(nodelist))
 for i in range(6):
     print(i)
     cum_propagator = propagator @ cum_propagator
     random_walker += (beta**i)*cum_propagator
+random_walker = (1-beta)*random_walker
 
 mutation_unstacked = pd.read_csv("data/HMF_somatic_PASS_GENE_HIGH.txt", sep="\t", header=None)
 mutation_unstacked[4] = 1
@@ -69,5 +45,36 @@ for i in tqdm.tqdm(mutation.columns):
     smoothed_mutations.append(random_walker * mutation.loc[:,i])
 smoothed_mutation = pd.DataFrame(np.vstack(smoothed_mutations).T, index = mutation.index, columns=mutation.columns)
 
+# removed rows and columns with all zeros
+# representing samples with no mutations in PPI genes and
+# isolated, unmutated genes in the PPI respectively
+smoothed_mutation = smoothed_mutation.T[(smoothed_mutation**2).sum(axis=0) > 0].T
+smoothed_mutation = smoothed_mutation[(smoothed_mutation**2).sum(axis=1) > 0]
 
-smoothed_mutation.to_csv("data/smoothed_mutation_"+parameter+".csv")
+import sklearn.decomposition
+# PCA to find the characteristic dimensions of
+# "mutation space" 
+pca = sklearn.decomposition.PCA(n_components=50)
+
+# transfomred features are per sample and are the
+# condensed representation of the mutational profile of each sample
+transformed_features = pd.DataFrame(pca.fit_transform(smoothed_mutation), index=smoothed_mutation.index)
+transformed_features.to_csv(f"data/pca_smooth_features_"+parameter+".csv")
+
+# the compnents represent which genes'mutationns comttribute the 
+# prrofile of eacch sample
+components = pd.DataFrame(pca.components_, columns=smoothed_mutation.columns)
+components.to_csv("data/pca_components_"+parameter+".csv")
+
+draw=False
+if draw:
+    os.makedirs("figures/smoothing_"+parameter, exist_ok = True)
+
+    # replace the ensembl ids in the collumnns with hgnc gene symbols
+    smoothed_mutation_symbol = smoothed_mutation.copy()
+    smoothed_mutation_symbol.columns = smoothed_mutation.columns.map(lambda x : ensembl_symbol.get(x, "Pass"))
+
+    # plot the relatiosnhip between genes and samples after smoothng
+    sns.clustermap(smoothed_mutation_symbol, vmax=0.05, metric='cosine')
+    plt.savefig("figures/smoothing_"+parameter+"/clustermap_smoothed_mutation.png", dpi=500)
+    plt.savefig("figures/smoothing_"+parameter+"/clustermap_smoothed_mutation.svg")
